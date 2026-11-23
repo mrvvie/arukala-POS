@@ -1,7 +1,7 @@
 /* Service worker sederhana: menyimpan "kerangka" aplikasi agar bisa dibuka saat sinyal buruk.
    Jaringan didahulukan supaya pembaruan langsung terpakai; data API tidak pernah disimpan di sini. */
-var CACHE = 'arukala-shell-4a2';
-var SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.json', 'icons/icon-192.png', 'icons/apple-touch-icon-180.png'];
+var CACHE = 'arukala-shell-4a3';
+var SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.json', 'icons/icon-192.png', 'icons/logo-struk.png', 'icons/apple-touch-icon-180.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
 });

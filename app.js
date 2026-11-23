@@ -25,6 +25,9 @@
   function rp(n) { return 'Rp' + String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
   function hm(t) { return String(t || '').slice(0, 5); }
   function dateId(iso) { var p = String(iso).split('-'); var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])); return DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear(); }
+  var MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  function dShort(iso) { var p = String(iso).split('-'); return Number(p[2]) + '/' + MONS[Number(p[1]) - 1] + '/' + p[0]; }
+  function qno(o) { var n = o.queueNo; if (!n) n = parseInt(String(o.orderId).split('-').pop(), 10) || 0; return ('00' + n).slice(-3); }
   function newRid(p) {
     var c = 'abcdefghijklmnopqrstuvwxyz0123456789', a = '', i, arr;
     try { arr = new Uint8Array(20); (window.crypto || window.msCrypto).getRandomValues(arr); for (i = 0; i < 20; i++) a += c[arr[i] % 36]; }
@@ -290,7 +293,7 @@
         if (!S.orders.orders.length) h += '<p class="empty">Belum ada order hari ini.</p>';
         else h += '<div class="list">' + S.orders.orders.map(function (o, i) {
           var n = 0; o.items.forEach(function (it) { n += it.qty; });
-          return '<button class="item" data-a="openOrder" data-v="' + i + '"><div class="l"><b>' + esc(o.orderId) + '</b><span class="sm mute">' + hm(o.time) + ', ' + esc(o.payment) + ', ' + esc(o.staff) + '</span></div><div class="r"><b>' + rp(o.total) + '</b><br><span class="sm mute">' + n + ' item</span></div></button>';
+          return '<button class="item" data-a="openOrder" data-v="' + i + '"><div class="l"><b>No. ' + qno(o) + '</b><span class="sm mute">' + hm(o.time) + ', ' + esc(o.payment) + ', ' + esc(o.staff) + '</span></div><div class="r"><b>' + rp(o.total) + '</b><br><span class="sm mute">' + n + ' item</span></div></button>';
         }).join('') + '</div>';
       }
     } else {
@@ -335,15 +338,23 @@
     return h + '</div></div>';
   }
   function receiptHtml(o) {
-    var h = '<div class="receipt" id="receipt"><div class="c"><b>' + esc(S.cafeName) + '</b><br>' + esc(dateId(o.date)) + ' ' + hm(o.time) + '</div><hr><div>' + esc(o.orderId) + '</div><div>Kasir: ' + esc(o.staff) + '</div><hr>';
-    o.items.forEach(function (i) { h += '<div>' + esc(i.name) + '</div><div class="r"><span>' + i.qty + ' x ' + rp(i.price).replace('Rp', '') + '</span><span>' + rp(i.subtotal).replace('Rp', '') + '</span></div>'; });
-    h += '<hr><div class="r"><b>TOTAL</b><b>' + rp(o.total) + '</b></div><div class="r"><span>Bayar</span><span>' + esc(o.payment) + '</span></div>' + (o.notes ? '<div>Catatan: ' + esc(o.notes) + '</div>' : '') + '<hr><div class="c">Terima kasih</div></div>';
+    var h = '<div class="receipt" id="receipt"><div class="rc"><img class="rlogo" src="icons/logo-struk.png" alt="Arukala Coffee"></div>' +
+      '<div class="rc rq"><span class="rql">NO. ANTRIAN</span><b>' + qno(o) + '</b></div><div class="rule dbl"></div>' +
+      '<div class="rr"><span>Tanggal</span><span>' + esc(dShort(o.date)) + ' ' + hm(o.time) + '</span></div>' +
+      '<div class="rr"><span>Kasir</span><span>' + esc(o.staff) + '</span></div><div class="rule dsh"></div>';
+    o.items.forEach(function (i) {
+      h += '<div class="ri">' + esc(i.name) + '</div><div class="rr"><span>' + i.qty + ' x ' + rp(i.price).replace('Rp', '') + '</span><span>' + rp(i.subtotal).replace('Rp', '') + '</span></div>';
+    });
+    h += '<div class="rule dsh"></div><div class="rr rt"><span>TOTAL:</span><span>' + rp(o.total) + '</span></div><div class="rule dsh"></div>' +
+      '<div class="rr"><span>' + esc(o.payment) + '</span><span>' + rp(o.total).replace('Rp', '') + '</span></div>' +
+      (o.notes ? '<div class="rn">Catatan: ' + esc(o.notes) + '</div>' : '') +
+      '<div class="rule dsh"></div><div class="rr"><span>No. Order</span><span>' + esc(o.orderId) + '</span></div><div class="rule dbl"></div><div class="rc">Terima kasih</div></div>';
     return h;
   }
   function vModal() {
     var m = S.modal, h = '<div class="modal" data-a="mbg"><div class="sheetbox">';
     if (m.type === 'order') {
-      if (m.fresh) h += '<div class="ok-h"><i>&#10003;</i><div><b>' + (m.dup ? 'Order sudah tersimpan' : 'Order tersimpan') + '</b><div class="sm mute">' + esc(m.order.orderId) + '</div></div></div>';
+      if (m.fresh) h += '<div class="ok-h"><i>&#10003;</i><div><b>' + (m.dup ? 'Order sudah tersimpan' : 'Order tersimpan') + '</b><div class="sm mute">No. antrian ' + qno(m.order) + '</div></div></div>';
       else h += '<div class="row" style="margin-bottom:10px"><b>Detail order</b></div>';
       h += receiptHtml(m.order) + '<div class="vs" style="margin-top:14px"><button class="btn pri big" data-a="mclose">' + (m.fresh ? 'Order berikutnya' : 'Tutup') + '</button><button class="btn big line" data-a="print">Cetak struk</button></div>';
     } else if (m.type === 'pin') {
