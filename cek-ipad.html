@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cek perangkat Arukala</title>
+<style>
+body{font-family:-apple-system,"Helvetica Neue",Arial,sans-serif;margin:0;padding:18px;background:#F3F2ED;color:#262420;font-size:16px;line-height:1.4}
+h1{font-size:22px;margin:0 0 6px}p{margin:6px 0 12px;color:#6B675E}
+#sum{padding:14px 16px;border-radius:12px;font-size:18px;font-weight:700;margin:14px 0;background:#fff;border:1px solid #DDDAD0}
+#sum.ok{background:#E3EEE8;border-color:#9DBCAE;color:#1f4f3a}#sum.bad{background:#F4DEDA;border-color:#DDB1AA;color:#7A2F27}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #DDDAD0}
+td{padding:11px 12px;border-bottom:1px solid #E7E4DA;vertical-align:top;font-size:15px}
+td.s{width:130px;font-weight:700;white-space:nowrap}
+.ok{color:#2f6b4f}.bad{color:#a2483d}.warn{color:#8a6d1a}.info{color:#6B675E}
+.d{display:block;font-weight:400;color:#6B675E;font-size:13px;margin-top:2px;word-break:break-all}
+</style></head><body>
+<h1>Cek perangkat untuk Arukala</h1>
+<p>Buka halaman ini di perangkat yang akan dipakai (misalnya iPad kasir). Tunggu beberapa detik, lalu kirim tangkapan layar hasilnya jika ada yang gagal.</p>
+<div id="sum">Memeriksa…</div>
+<table id="t"></table>
+<p id="info"></p>
+<script src="config.js"></script>
+<script>
+(function () {
+  var rows = [], bad = 0, warn = 0, pending = 0;
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  var LABEL = { ok: 'Lancar', bad: 'GAGAL', warn: 'Perlu perhatian', info: 'Info' };
+  function draw() {
+    var h = '', i;
+    for (i = 0; i < rows.length; i++) h += '<tr><td class="s ' + rows[i][1] + '">' + LABEL[rows[i][1]] + '</td><td>' + esc(rows[i][0]) + (rows[i][2] ? '<span class="d">' + esc(rows[i][2]) + '</span>' : '') + '</td></tr>';
+    document.getElementById('t').innerHTML = h;
+    var s = document.getElementById('sum');
+    if (pending > 0) { s.className = ''; s.textContent = 'Memeriksa…'; return; }
+    if (bad === 0) { s.className = 'ok'; s.textContent = 'Perangkat ini siap menjalankan Arukala.' + (warn ? ' (Ada ' + warn + ' catatan di bawah.)' : ''); }
+    else { s.className = 'bad'; s.textContent = bad + ' pemeriksaan gagal. Kirim tangkapan layar halaman ini ke pengembang.'; }
+  }
+  function add(name, status, detail) { rows.push([name, status, detail || '']); if (status === 'bad') bad++; if (status === 'warn') warn++; draw(); }
+  function syn(code) { try { new Function(code); return true; } catch (e) { return false; } }
+  function css(p, v) { try { return !!(window.CSS && CSS.supports && CSS.supports(p, v)); } catch (e) { return false; } }
+
+  add('Peramban', 'info', navigator.userAgent);
+  add('Layar', 'info', screen.width + ' x ' + screen.height + ', skala ' + (window.devicePixelRatio || 1) + ', jendela ' + window.innerWidth + ' x ' + window.innerHeight);
+  var standalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  add('Dibuka dari ikon Layar Utama', standalone ? 'ok' : 'info', standalone ? 'Ya (mode aplikasi).' : 'Belum. Normal jika Anda baru menguji lewat Safari.');
+  add('Async / await', syn('return (async function(){ await 1; })') ? 'ok' : 'bad', 'Dipakai di seluruh aplikasi.');
+  add('Fungsi panah dan template string', syn('var f=(a)=>`x${a}`; return f(1);') ? 'ok' : 'bad');
+  add('Promise dan fetch', (typeof Promise === 'function' && typeof fetch === 'function') ? 'ok' : 'bad', 'Untuk komunikasi dengan server.');
+  var ls = false; try { localStorage.setItem('__t', '1'); ls = localStorage.getItem('__t') === '1'; localStorage.removeItem('__t'); } catch (e) { }
+  add('Penyimpanan lokal (localStorage)', ls ? 'ok' : 'warn', ls ? 'Sesi login bisa diingat.' : 'Tidak aktif (mode privat?). Anda harus login ulang setiap membuka aplikasi.');
+  add('Acak aman (crypto)', (window.crypto && window.crypto.getRandomValues) ? 'ok' : 'warn', 'Untuk kode anti-order-ganda; ada cadangan jika tidak ada.');
+  add('CSS Grid', css('display', 'grid') ? 'ok' : 'bad', 'Dipakai untuk kartu menu.');
+  add('CSS variabel warna', css('color', 'var(--a)') ? 'ok' : 'bad');
+  add('Area aman layar (env)', (css('padding-top', 'env(safe-area-inset-top)') || css('padding-top', 'constant(safe-area-inset-top)')) ? 'ok' : 'warn', 'Hanya penting untuk perangkat dengan poni.');
+  add('Service worker', ('serviceWorker' in navigator) ? 'ok' : 'warn', 'Untuk membuka aplikasi saat sinyal buruk. Tidak wajib.');
+  add('IndexedDB', window.indexedDB ? 'ok' : 'warn', 'Untuk antrean offline di tahap berikutnya.');
+
+  var url = (window.ARUKALA_CONFIG || {}).API_URL;
+  if (!url) { add('Koneksi ke server Arukala', 'info', 'API_URL di config.js belum diisi. Normal sebelum backend dipasang.'); draw(); return; }
+  pending++; var t0 = new Date().getTime(), done = false;
+  function fin(status, name, detail) { if (done) return; done = true; pending--; add(name, status, detail); }
+  setTimeout(function () { fin('bad', 'Koneksi ke server Arukala', 'Tidak ada jawaban dalam 20 detik. Periksa internet atau alamat API_URL.'); }, 20000);
+  try {
+    fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'ping', payload: {} }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { var ms = new Date().getTime() - t0; if (j && j.ok) fin(ms > 6000 ? 'warn' : 'ok', 'Koneksi ke server Arukala', 'Berhasil dalam ' + ms + ' ms' + (ms > 6000 ? ' (lambat)' : '') + '.'); else fin('bad', 'Koneksi ke server Arukala', 'Server menjawab tetapi dengan kesalahan: ' + (j && j.message)); })
+      .catch(function (e) { fin('bad', 'Koneksi ke server Arukala', 'Gagal terhubung: ' + e + '. Kemungkinan alamat salah, deployment belum "Siapa saja", atau sertifikat tidak dikenali iOS lama.'); });
+  } catch (e) { fin('bad', 'Koneksi ke server Arukala', String(e)); }
+})();
+</script></body></html>
