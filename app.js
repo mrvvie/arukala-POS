@@ -288,7 +288,7 @@
   }
   function vOrder() {
     var cats = menuCats();
-    return '<div class="pos"><div class="menucol"><div class="tools"><input type="search" id="q" data-bind="q" placeholder="Cari menu" autocomplete="off" value="' + esc(S.q) + '"><div class="cats" id="cats">' + catsHtml(cats) + '</div></div><div class="gridwrap"><div class="grid" id="grid">' + gridHtml() + '</div></div></div><div class="cartcol" id="cartcol">' + cartHtml() + '</div></div><div class="cartbar" id="cartbar">' + barHtml() + '</div><div class="backdrop" data-a="cartclose"></div>';
+    return '<div class="pos"><div class="menucol"><div class="tools">' + printerButton() + '<input type="search" id="q" data-bind="q" placeholder="Cari menu" autocomplete="off" value="' + esc(S.q) + '"><div class="cats" id="cats">' + catsHtml(cats) + '</div></div><div class="gridwrap"><div class="grid" id="grid">' + gridHtml() + '</div></div></div><div class="cartcol" id="cartcol">' + cartHtml() + '</div></div><div class="cartbar" id="cartbar">' + barHtml() + '</div><div class="backdrop" data-a="cartclose"></div>';
   }
   function catsHtml(cats) { return cats.map(function (c) { return '<button data-a="cat" data-v="' + esc(c) + '" class="' + (!S.q && S.cat === c ? 'on' : '') + '">' + esc(c) + '</button>'; }).join(''); }
 
@@ -635,7 +635,7 @@
         else if (m.frozen) acts += '<div class="note">Tanggal ini sudah closing. Buka kembali closing sebelum mengubah atau menghapus.</div>';
         else acts += '<button class="btn big outline" data-a="orderPay">Ubah pembayaran ke ' + (od.payment === 'Cash' ? 'QRIS' : 'Cash') + '</button><button class="btn big outline red" data-a="orderDel">Hapus order</button>';
       }
-      h += receiptHtml(od) + '<div class="vs" style="margin-top:14px">' + acts + '<button class="btn pri big" data-a="mclose">' + (m.fresh ? 'Order berikutnya' : 'Tutup') + '</button><button class="btn big outline" data-a="wa">Kirim lewat WhatsApp</button><button class="btn big outline" data-a="print">Cetak struk 58 mm</button></div>';
+      h += receiptHtml(od) + '<div class="vs" style="margin-top:14px">' + acts + '<button class="btn pri big" data-a="mclose">' + (m.fresh ? 'Order berikutnya' : 'Tutup') + '</button><button class="btn big outline" data-a="wa">Kirim lewat WhatsApp</button>' + (printerOutput ? '<button class="btn pri big" data-a="printBluetooth"' + (printerBusy ? ' disabled' : '') + '>Cetak struk Bluetooth</button>' : printerButton()) + '<button class="btn big outline" data-a="print">Cetak lewat sistem (58 mm)</button></div>';
     } else if (m.type === 'reason') {
       var r = S.reason;
       h += '<h3 style="margin:0 0 6px">' + esc(r.title) + '</h3><p class="mute sm" style="margin:0 0 12px">' + esc(r.desc) + '</p><label class="field"><span>Alasan (wajib)</span><input type="text" data-bind="reason.text" maxlength="200" value="' + esc(r.text) + '"></label>' + (r.err ? '<div class="err" style="margin-top:12px">' + esc(r.err) + '</div>' : '') +
@@ -709,6 +709,108 @@
       S.modal = null; S.edit = null; toast('Menu disimpan.'); return call('bootstrap').then(function (d) { S.menu = d.menu; S.categories = d.categories; render(); });
     }).catch(function (err) { if (S.edit) { S.edit.busy = false; S.edit.err = err.message; render(); } });
   }
+  var printerDevice = null, printerOutput = null, printerBusy = false;
+  var printerProfiles = [
+    [0xff00, 0xff02], [0xffe0, 0xffe1], [0xfff0, 0xfff2],
+    [0x18f0, 0x2af1],
+    ['49535343-fe7d-4ae5-8fa9-9fafd205e455', '49535343-8841-43f4-a8d4-ecbe34729bb3']
+  ];
+  function printerButton() {
+    if (!navigator.bluetooth) return '';
+    var label = printerOutput ? 'Putuskan ' + (printerDevice.name || 'printer') : 'Sambungkan printer Bluetooth';
+    return '<button class="btn outline" data-a="printerLink"' + (printerBusy ? ' disabled' : '') + '>' + esc(printerBusy ? 'Printer sedang diproses…' : label) + '</button>';
+  }
+  function printerLost(e) {
+    if (printerDevice !== e.target) return;
+    printerDevice = printerOutput = null;
+    render();
+    toast('Sambungan printer terputus.');
+  }
+  async function printerLink() {
+    if (printerBusy) return;
+    if (printerDevice) { printerDevice.gatt.disconnect(); return; }
+    printerBusy = true;
+    var device, message, failed = false;
+    try {
+      var choice = navigator.bluetooth.requestDevice({
+        acceptAllDevices: true, optionalServices: printerProfiles.map(function (pair) { return pair[0]; })
+      });
+      render();
+      device = await choice;
+      var server = await device.gatt.connect();
+      for (var pair of printerProfiles) {
+        try {
+          var service = await server.getPrimaryService(pair[0]);
+          var out = await service.getCharacteristic(pair[1]);
+          if (out.properties.write || out.properties.writeWithoutResponse) {
+            printerOutput = out;
+            break;
+          }
+        } catch (e) { if (e.name !== 'NotFoundError') throw e; }
+      }
+      if (!printerOutput) throw new Error('Profil printer BLE ini belum didukung. Gunakan Cetak lewat sistem.');
+      printerDevice = device;
+      device.addEventListener('gattserverdisconnected', printerLost, { once: true });
+      message = 'Printer tersambung: ' + (device.name || 'Bluetooth');
+    } catch (e) {
+      if (device && device.gatt.connected) device.gatt.disconnect();
+      if (e.name !== 'NotFoundError') { message = e.message || 'Gagal menyambungkan printer.'; failed = true; }
+    } finally {
+      printerBusy = false;
+      render();
+      if (message) toast(message, failed);
+    }
+  }
+  function printerText(receipt) {
+    // Font A standar 58 mm: 32 kolom. Bersihkan kontrol sebelum menambah perintah ESC/POS.
+    function clean(s) { return String(s || '').replace(/\s+/g, ' ').replace(/[^ -~]/g, '?').trim(); }
+    var lines = [];
+    function line(s) {
+      s = clean(s);
+      while (s.length > 32) {
+        var cut = s.lastIndexOf(' ', 32);
+        if (cut < 1) cut = 32;
+        lines.push(s.slice(0, cut));
+        s = s.slice(cut).trim();
+      }
+      if (s) lines.push(s);
+    }
+    Array.prototype.forEach.call(receipt.children, function (row) {
+      var logo = row.querySelector('img');
+      if (logo) line(logo.alt);
+      else if (row.classList.contains('rule')) lines.push('--------------------------------');
+      else if (row.classList.contains('rr')) {
+        var left = clean(row.firstElementChild.textContent), right = clean(row.lastElementChild.textContent);
+        if (left.length + right.length < 32) lines.push(left + ' '.repeat(32 - left.length - right.length) + right);
+        else { line(left); line(right); }
+      } else if (row.classList.contains('rq')) line('No. antrian: ' + row.lastElementChild.textContent);
+      else line(row.textContent);
+    });
+    return new TextEncoder().encode('\x1b@' + lines.join('\n') + '\n\n\n\n');
+  }
+  async function printBluetooth() {
+    if (!printerOutput || printerBusy) return;
+    var target = printerOutput;
+    var data = printerText(el('receipt'));
+    printerBusy = true;
+    render();
+    var message, failed = false;
+    try {
+      for (var i = 0; i < data.length; i += 20) {
+        var chunk = data.subarray(i, i + 20);
+        if (target.properties.write && target.writeValueWithResponse) await target.writeValueWithResponse(chunk);
+        else if (target.writeValueWithoutResponse && target.properties.writeWithoutResponse) {
+          await target.writeValueWithoutResponse(chunk);
+          await new Promise(function (resolve) { setTimeout(resolve, 20); });
+        } else await target.writeValue(chunk);
+      }
+      message = 'Struk dikirim ke printer.';
+    } catch (e) {
+      message = 'Pengiriman terhenti. Periksa kertas sebelum mencetak ulang dari Riwayat.';
+      failed = true;
+    } finally { printerBusy = false; render(); toast(message, failed); }
+  }
+
   var clearPreviousPrint;
   function printWith(cls) {
     if (clearPreviousPrint) clearPreviousPrint();
@@ -801,6 +903,8 @@
     },
     mclose: function () { S.modal = null; S.edit = null; render(); },
     mbg: function (e, ev) { if (ev.target === e && S.modal && S.modal.type !== 'menu') { S.modal = null; render(); } },
+    printerLink: printerLink,
+    printBluetooth: printBluetooth,
     print: function () { printWith('print-receipt'); },
     menuNew: function () { S.edit = { id: '', name: '', category: S.cat || '', variant: '', price: '', cost: '', active: true, err: '', busy: false }; S.modal = { type: 'menu' }; render(); },
     menuEdit: function (e) { var m = menuById(e.getAttribute('data-v')); if (!m) return; S.edit = { id: m.id, name: m.name, category: m.category, variant: m.variant || '', price: String(m.price), cost: m.cost === null || m.cost === undefined ? '' : String(m.cost), active: m.active !== false, err: '', busy: false }; S.modal = { type: 'menu' }; render(); },
