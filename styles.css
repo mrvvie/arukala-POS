@@ -150,6 +150,14 @@ textarea{resize:none;font-family:inherit}
 .receipt .rr{display:flex;justify-content:space-between}.receipt .rr span:first-child{padding-right:8px}
 .receipt .ri{margin-top:4px;word-break:break-word}.receipt .rt{font-size:17px;font-weight:700;font-family:Arial,Helvetica,sans-serif}
 .receipt .rn{margin-top:4px;font-size:12px}
+.receipt-heading,.receipt-actions{max-width:320px;margin-left:auto;margin-right:auto}
+.receipt-heading{margin-bottom:12px}
+.receipt-actions{display:flex;flex-direction:column;margin-top:12px}
+.receipt-actions>.pri{min-height:48px}
+.receipt-share{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-gap:8px;margin-top:8px}
+.receipt-share .btn{padding:6px 8px;line-height:1.2}
+.receipt-actions>.lnk{align-self:center;min-height:44px;padding:6px 12px}
+.receipt-owner{border-top:1px solid var(--line);padding-top:12px;margin-top:8px}
 .ok-h{display:flex;align-items:center;margin-bottom:12px}.ok-h i{width:34px;height:34px;border-radius:50%;background:var(--sage);color:#fff;font-style:normal;text-align:center;line-height:34px;font-weight:700;margin-right:10px}
 .bigpin{font-size:38px;font-weight:700;letter-spacing:.2em;text-align:center;margin:10px 0}
 #toast{position:fixed;left:0;right:0;top:calc(62px + env(safe-area-inset-top));display:flex;flex-direction:column;align-items:center;z-index:99;pointer-events:none}

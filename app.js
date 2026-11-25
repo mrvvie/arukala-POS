@@ -624,18 +624,32 @@
     if (c.receipt.footerOn && c.cafe.footer) { L.push(''); L.push(c.cafe.footer); }
     return L.join('\n');
   }
+  function receiptActions(m, ownerActions) {
+    var bluetooth = Boolean(navigator.bluetooth);
+    var printAction = printerOutput ? 'printBluetooth' : bluetooth ? 'printerLink' : 'print';
+    var printLabel = 'Cetak struk';
+    if (printerBusy) printLabel = printerOutput ? 'Mengirim struk…' : 'Menyambungkan…';
+    else if (bluetooth) printLabel = printerOutput ? 'Cetak Bluetooth' : 'Sambungkan printer';
+    return '<div class="receipt-actions">' +
+      '<button class="btn pri" data-a="mclose">' + (m.fresh ? 'Order berikutnya' : 'Tutup') + '</button>' +
+      '<div class="receipt-share">' +
+      '<button class="btn outline" data-a="' + printAction + '"' + (printerBusy ? ' disabled' : '') + '>' + printLabel + '</button>' +
+      '<button class="btn outline" data-a="wa">WhatsApp</button></div>' +
+      (bluetooth ? '<button class="lnk" data-a="print"' + (printerBusy ? ' disabled' : '') + '>Cetak lewat sistem</button>' : '') +
+      (ownerActions ? '<div class="vs receipt-owner">' + ownerActions + '</div>' : '') + '</div>';
+  }
   function vModal() {
     var m = S.modal, h = '<div class="modal" data-a="mbg"><div class="sheetbox">';
     if (m.type === 'order') {
-      if (m.fresh) h += '<div class="ok-h"><i>&#10003;</i><div><b>' + (m.dup ? 'Order sudah tersimpan' : 'Order tersimpan') + '</b><div class="sm mute">No. antrian ' + qno(m.order) + '</div></div></div>';
-      else h += '<div class="row" style="margin-bottom:10px"><b>Detail order</b></div>';
+      if (m.fresh) h += '<div class="receipt-heading ok-h"><i aria-hidden="true">&#10003;</i><div><b>' + (m.dup ? 'Order sudah tersimpan' : 'Order tersimpan') + '</b><div class="sm mute">No. antrian ' + qno(m.order) + '</div></div></div>';
+      else h += '<div class="receipt-heading"><b>Detail order</b></div>';
       var od = m.order, acts = '';
       if (!m.fresh && isOwner()) {
         if (od.deleted) acts += '<div class="err">Order ini DIHAPUS' + (od.deleteReason ? ': ' + esc(od.deleteReason) : '') + '</div>' + (m.frozen ? '' : '<button class="btn ok big" data-a="orderRestore">Pulihkan order</button>');
         else if (m.frozen) acts += '<div class="note">Tanggal ini sudah closing. Buka kembali closing sebelum mengubah atau menghapus.</div>';
         else acts += '<button class="btn big outline" data-a="orderPay">Ubah pembayaran ke ' + (od.payment === 'Cash' ? 'QRIS' : 'Cash') + '</button><button class="btn big outline red" data-a="orderDel">Hapus order</button>';
       }
-      h += receiptHtml(od) + '<div class="vs" style="margin-top:14px">' + acts + '<button class="btn pri big" data-a="mclose">' + (m.fresh ? 'Order berikutnya' : 'Tutup') + '</button><button class="btn big outline" data-a="wa">Kirim lewat WhatsApp</button>' + (printerOutput ? '<button class="btn pri big" data-a="printBluetooth"' + (printerBusy ? ' disabled' : '') + '>Cetak struk Bluetooth</button>' : printerButton()) + '<button class="btn big outline" data-a="print">Cetak lewat sistem (58 mm)</button></div>';
+      h += receiptHtml(od) + receiptActions(m, acts);
     } else if (m.type === 'reason') {
       var r = S.reason;
       h += '<h3 style="margin:0 0 6px">' + esc(r.title) + '</h3><p class="mute sm" style="margin:0 0 12px">' + esc(r.desc) + '</p><label class="field"><span>Alasan (wajib)</span><input type="text" data-bind="reason.text" maxlength="200" value="' + esc(r.text) + '"></label>' + (r.err ? '<div class="err" style="margin-top:12px">' + esc(r.err) + '</div>' : '') +
@@ -664,6 +678,7 @@
     var body = S.view === 'order' ? vOrder() : S.view === 'expense' ? vExpense() : S.view === 'history' ? vHistory() : S.view === 'closing' ? vClosing() : S.view === 'kas' ? vKas() : S.view === 'settings' ? vSettings() : S.view === 'dashboard' ? vDashboard() : S.view === 'reports' ? vReports() : S.view === 'more' ? vMore() : S.view === 'menuAdmin' ? vMenuAdmin() : S.view === 'users' ? vUsers() : '';
     return topHtml() + '<div class="main">' + body + '</div>' + navHtml();
   }
+  var lastRenderedModal;
   function render() {
     var h;
     if (S.view === 'noconfig') h = vNoConfig();
@@ -675,7 +690,12 @@
     if (S.locked) h += vLock();
     if (S.modal) el('toast').innerHTML = '';
     var prevSc = document.querySelector('.scroll'), top = prevSc ? prevSc.scrollTop : 0, pv = S._pv;
+    var currentSheet = S.modal && S.modal.type === 'order' && S.modal === lastRenderedModal
+      ? document.querySelector('.sheetbox') : null;
+    var sheetTop = currentSheet ? currentSheet.scrollTop : 0;
     el('app').innerHTML = h;
+    if (sheetTop) document.querySelector('.sheetbox').scrollTop = sheetTop;
+    lastRenderedModal = S.modal;
     var nwSc = document.querySelector('.scroll'); if (nwSc && pv === S.view) nwSc.scrollTop = top; S._pv = S.view;
     el('app').className = S.cartOpen && S.view === 'order' ? 'sheet' : '';
   }
@@ -761,52 +781,133 @@
       if (message) toast(message, failed);
     }
   }
-  function printerText(receipt) {
-    // Font A standar 58 mm: 32 kolom. Bersihkan kontrol sebelum menambah perintah ESC/POS.
-    function clean(s) { return String(s || '').replace(/\s+/g, ' ').replace(/[^ -~]/g, '?').trim(); }
-    var lines = [];
-    function line(s) {
-      s = clean(s);
-      while (s.length > 32) {
-        var cut = s.lastIndexOf(' ', 32);
-        if (cut < 1) cut = 32;
-        lines.push(s.slice(0, cut));
-        s = s.slice(cut).trim();
-      }
-      if (s) lines.push(s);
+  function paintReceiptText(ctx, node, style, bounds) {
+    var range = document.createRange(), text = node.textContent;
+    ctx.font = style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily;
+    ctx.fillStyle = style.color;
+    ctx.textBaseline = 'alphabetic';
+    if ('letterSpacing' in ctx) ctx.letterSpacing = style.letterSpacing === 'normal' ? '0px' : style.letterSpacing;
+    var metrics = ctx.measureText('Mg');
+    var baseline = isFinite(metrics.fontBoundingBoxAscent)
+      ? (metrics.fontBoundingBoxAscent - metrics.fontBoundingBoxDescent) / 2
+      : parseFloat(style.fontSize) * 0.3;
+    var line = '', box = null, offset = 0;
+    function paintLine() {
+      ctx.fillText(line, box.left - bounds.left, (box.top + box.height / 2) - bounds.top + baseline);
     }
-    Array.prototype.forEach.call(receipt.children, function (row) {
-      var logo = row.querySelector('img');
-      if (logo) line(logo.alt);
-      else if (row.classList.contains('rule')) lines.push('--------------------------------');
-      else if (row.classList.contains('rr')) {
-        var left = clean(row.firstElementChild.textContent), right = clean(row.lastElementChild.textContent);
-        if (left.length + right.length < 32) lines.push(left + ' '.repeat(32 - left.length - right.length) + right);
-        else { line(left); line(right); }
-      } else if (row.classList.contains('rq')) line('No. antrian: ' + row.lastElementChild.textContent);
-      else line(row.textContent);
-    });
-    return new TextEncoder().encode('\x1b@' + lines.join('\n') + '\n\n\n\n');
+    // Gunakan posisi baris dari browser agar teks panjang mengikuti pembungkusan CSS.
+    for (var character of text) {
+      range.setStart(node, offset);
+      offset += character.length;
+      range.setEnd(node, offset);
+      var next = range.getBoundingClientRect();
+      if (!next.width) continue;
+      if (box && next.top !== box.top) {
+        paintLine();
+        line = '';
+        box = null;
+      }
+      if (!box) box = next;
+      line += character;
+    }
+    if (box) paintLine();
+  }
+  function paintReceipt(ctx, element, bounds) {
+    var rect = element.getBoundingClientRect();
+    var x = rect.left - bounds.left, y = rect.top - bounds.top;
+    if (element.tagName === 'IMG') {
+      ctx.drawImage(element, x, y, rect.width, rect.height);
+      return;
+    }
+    if (element.classList.contains('rule')) {
+      ctx.fillStyle = '#000';
+      if (element.classList.contains('dbl')) {
+        ctx.fillRect(x, y, rect.width, 1);
+        ctx.fillRect(x, y + rect.height - 1, rect.width, 1);
+      } else {
+        for (var dx = 0; dx < rect.width; dx += 5) {
+          ctx.fillRect(x + dx, y, Math.min(3, rect.width - dx), 1);
+        }
+      }
+      return;
+    }
+    var style = getComputedStyle(element);
+    if (element.matches('.rq b')) {
+      ctx.fillStyle = style.backgroundColor;
+      ctx.fillRect(x, y, rect.width, rect.height);
+    }
+    for (var child of element.childNodes) {
+      if (child.nodeType === 1) paintReceipt(ctx, child, bounds);
+      else if (child.nodeType === 3) paintReceiptText(ctx, child, style, bounds);
+    }
+  }
+  async function printerRaster(receipt) {
+    var copy = receipt.cloneNode(true);
+    copy.removeAttribute('id');
+    copy.setAttribute('aria-hidden', 'true');
+    copy.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;width:320px;margin:0;border:0;overflow-wrap:anywhere';
+    for (var value of copy.querySelectorAll('.rr span:last-child')) value.style.textAlign = 'right';
+    document.body.appendChild(copy);
+    try {
+      var logo = copy.querySelector('.rlogo');
+      if (logo) await logo.decode();
+      var bounds = copy.getBoundingClientRect();
+      var canvas = document.createElement('canvas');
+      canvas.width = 384; // Area cetak 48 mm pada 203 dpi.
+      var scale = canvas.width / bounds.width;
+      canvas.height = Math.ceil(bounds.height * scale);
+      var ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(scale, scale);
+      paintReceipt(ctx, copy, bounds);
+
+      var chunks = [Uint8Array.of(0x1b, 0x40)]; // ESC @
+      var byteWidth = canvas.width / 8;
+      // Kirim GS v 0 dalam blok kecil agar sesuai dengan buffer printer.
+      for (var top = 0; top < canvas.height; top += 24) {
+        var rows = Math.min(24, canvas.height - top);
+        var pixels = ctx.getImageData(0, top, canvas.width, rows).data;
+        var band = new Uint8Array(8 + byteWidth * rows);
+        band.set([0x1d, 0x76, 0x30, 0, byteWidth, 0, rows, 0]);
+        for (var p = 0; p < pixels.length; p += 4) {
+          var brightness = 0.299 * pixels[p] + 0.587 * pixels[p + 1] + 0.114 * pixels[p + 2];
+          if (brightness < 160) band[8 + (p >> 5)] |= 0x80 >> ((p >> 2) & 7);
+        }
+        chunks.push(band);
+      }
+      chunks.push(Uint8Array.of(10, 10, 10));
+      return chunks;
+    } finally {
+      copy.remove();
+    }
   }
   async function printBluetooth() {
-    if (!printerOutput || printerBusy) return;
+    var receipt = document.querySelector('.modal .receipt');
+    if (!printerOutput || printerBusy || !receipt) return;
     var target = printerOutput;
-    var data = printerText(el('receipt'));
     printerBusy = true;
     render();
-    var message, failed = false;
+    var message, failed = false, sending = false;
     try {
-      for (var i = 0; i < data.length; i += 20) {
-        var chunk = data.subarray(i, i + 20);
-        if (target.properties.write && target.writeValueWithResponse) await target.writeValueWithResponse(chunk);
-        else if (target.writeValueWithoutResponse && target.properties.writeWithoutResponse) {
-          await target.writeValueWithoutResponse(chunk);
-          await new Promise(function (resolve) { setTimeout(resolve, 20); });
-        } else await target.writeValue(chunk);
+      var bands = await printerRaster(receipt);
+      if (printerOutput !== target) throw new Error('Printer disconnected');
+      sending = true;
+      for (var band of bands) {
+        for (var i = 0; i < band.length; i += 20) {
+          var chunk = band.subarray(i, i + 20);
+          if (target.properties.write && target.writeValueWithResponse) await target.writeValueWithResponse(chunk);
+          else if (target.writeValueWithoutResponse && target.properties.writeWithoutResponse) {
+            await target.writeValueWithoutResponse(chunk);
+            await new Promise(function (resolve) { setTimeout(resolve, 20); });
+          } else await target.writeValue(chunk);
+        }
       }
       message = 'Struk dikirim ke printer.';
     } catch (e) {
-      message = 'Pengiriman terhenti. Periksa kertas sebelum mencetak ulang dari Riwayat.';
+      if (sending) message = 'Cetak terhenti. Periksa kertas, lalu nyalakan ulang printer sebelum mencoba lagi.';
+      else if (printerOutput !== target) message = 'Sambungkan kembali printer Bluetooth.';
+      else message = 'Gambar struk gagal disiapkan. Coba lagi atau gunakan Cetak lewat sistem.';
       failed = true;
     } finally { printerBusy = false; render(); toast(message, failed); }
   }
