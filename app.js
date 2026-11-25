@@ -781,109 +781,142 @@
       if (message) toast(message, failed);
     }
   }
-  function paintReceiptText(ctx, node, style, bounds) {
-    var range = document.createRange(), text = node.textContent;
-    ctx.font = style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily;
-    ctx.fillStyle = style.color;
-    ctx.textBaseline = 'alphabetic';
-    if ('letterSpacing' in ctx) ctx.letterSpacing = style.letterSpacing === 'normal' ? '0px' : style.letterSpacing;
-    var metrics = ctx.measureText('Mg');
-    var baseline = isFinite(metrics.fontBoundingBoxAscent)
-      ? (metrics.fontBoundingBoxAscent - metrics.fontBoundingBoxDescent) / 2
-      : parseFloat(style.fontSize) * 0.3;
-    var lineStart = 0, box = null, offset = 0;
-    function paintLine(end) {
-      // Ambil teks asli per baris, termasuk tanda gabung yang lebarnya nol.
-      var line = text.slice(lineStart, end).replace(/[ \t\n\f\r]+/g, ' ').replace(/^ | $/g, '').normalize('NFC');
-      ctx.fillText(line, box.left - bounds.left, (box.top + box.height / 2) - bounds.top + baseline);
-    }
-    // Posisi pembungkusan berasal dari tata letak browser.
-    for (var character of text) {
-      var start = offset;
-      range.setStart(node, start);
-      offset += character.length;
-      range.setEnd(node, offset);
-      var next = range.getBoundingClientRect();
-      if (!next.width) continue;
-      if (box && next.top !== box.top) {
-        paintLine(start);
-        lineStart = start;
-        box = null;
-      }
-      if (!box) box = next;
-    }
-    if (box) paintLine(text.length);
-  }
-  function paintReceipt(ctx, element, bounds) {
-    var rect = element.getBoundingClientRect();
-    var x = rect.left - bounds.left, y = rect.top - bounds.top;
-    if (element.tagName === 'IMG') {
-      ctx.drawImage(element, x, y, rect.width, rect.height);
-      return;
-    }
-    if (element.classList.contains('rule')) {
-      ctx.fillStyle = '#000';
-      if (element.classList.contains('dbl')) {
-        ctx.fillRect(x, y, rect.width, 1);
-        ctx.fillRect(x, y + rect.height - 1, rect.width, 1);
-      } else {
-        for (var dx = 0; dx < rect.width; dx += 5) {
-          ctx.fillRect(x + dx, y, Math.min(3, rect.width - dx), 1);
-        }
-      }
-      return;
-    }
-    var style = getComputedStyle(element);
-    if (element.matches('.rq b')) {
-      ctx.fillStyle = style.backgroundColor;
-      ctx.fillRect(x, y, rect.width, rect.height);
-    }
-    for (var child of element.childNodes) {
-      if (child.nodeType === 1) paintReceipt(ctx, child, bounds);
-      else if (child.nodeType === 3) paintReceiptText(ctx, child, style, bounds);
-    }
-  }
-  async function printerRaster(receipt) {
-    var copy = receipt.cloneNode(true);
-    copy.removeAttribute('id');
-    copy.setAttribute('aria-hidden', 'true');
-    copy.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;width:320px;margin:0;border:0;overflow-wrap:anywhere';
-    for (var value of copy.querySelectorAll('.rr span:last-child')) value.style.textAlign = 'right';
-    document.body.appendChild(copy);
-    try {
-      var logo = copy.querySelector('.rlogo');
-      if (logo) await logo.decode();
-      var bounds = copy.getBoundingClientRect();
-      var canvas = document.createElement('canvas');
-      canvas.width = 384; // Area cetak 48 mm pada 203 dpi.
-      var scale = canvas.width / bounds.width;
-      canvas.height = Math.ceil(bounds.height * scale);
-      var ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.scale(scale, scale);
-      paintReceipt(ctx, copy, bounds);
+  // Font A pada printer 58 mm: 32 kolom, masing-masing 12 titik.
+  var printerColumns = 32, printerCellWidth = 12;
 
-      var chunks = [Uint8Array.of(0x1b, 0x40)]; // ESC @
-      var byteWidth = canvas.width / 8;
-      // Kirim GS v 0 dalam blok kecil agar sesuai dengan buffer printer.
-      for (var top = 0; top < canvas.height; top += 24) {
-        var rows = Math.min(24, canvas.height - top);
-        var pixels = ctx.getImageData(0, top, canvas.width, rows).data;
-        var band = new Uint8Array(8 + byteWidth * rows);
-        band.set([0x1d, 0x76, 0x30, 0, byteWidth, 0, rows, 0]);
-        for (var p = 0; p < pixels.length; p += 4) {
-          var brightness = 0.299 * pixels[p] + 0.587 * pixels[p + 1] + 0.114 * pixels[p + 2];
-          if (brightness < 160) band[8 + (p >> 5)] |= 0x80 >> ((p >> 2) & 7);
-        }
-        chunks.push(band);
-      }
-      chunks.push(Uint8Array.of(10, 10, 10));
-      return chunks;
-    } finally {
-      copy.remove();
+  function wrapPrinterLine(text, columns) {
+    var chars = Array.from(String(text).normalize('NFC')
+      .replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim());
+    var lines = [];
+    while (chars.length > columns) {
+      var cut = chars.lastIndexOf(' ', columns);
+      if (cut < 1) cut = columns;
+      lines.push(chars.splice(0, cut).join(''));
+      if (chars[0] === ' ') chars.shift();
     }
+    if (chars.length) lines.push(chars.join(''));
+    return lines;
   }
+
+  function receiptBitmapBands(canvas) {
+    var ctx = canvas.getContext('2d');
+    var byteWidth = canvas.width / 8, bands = [];
+    for (var top = 0; top < canvas.height; top += 16) {
+      var rows = Math.min(16, canvas.height - top);
+      var pixels = ctx.getImageData(0, top, canvas.width, rows).data;
+      var data = new Uint8Array(8 + byteWidth * rows);
+      data.set([0x1d, 0x76, 0x30, 0, byteWidth, 0, rows, 0]); // GS v 0
+      for (var p = 0; p < pixels.length; p += 4) {
+        var luminance = 0.299 * pixels[p] + 0.587 * pixels[p + 1] + 0.114 * pixels[p + 2];
+        if (luminance < 160) data[8 + (p >> 5)] |= 0x80 >> ((p >> 2) & 7);
+      }
+      bands.push({ data: data, bitmap: true });
+    }
+    return bands;
+  }
+
+  async function printerReceipt(receipt) {
+    var parts = [], encoder = new TextEncoder(), logo = receipt.querySelector('.rlogo');
+    function command() { parts.push({ data: Uint8Array.from(arguments) }); }
+    function feed(dots) { command(0x1b, 0x4a, dots); } // ESC J
+    function align(position) { command(0x1b, 0x61, position); } // ESC a
+    function emphasis(on) { command(0x1b, 0x45, on ? 1 : 0); } // ESC E
+    function makeCanvas(width, height) {
+      var canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#000';
+      return canvas;
+    }
+    function nativeLine(line) { parts.push({ data: encoder.encode(line + '\n') }); }
+    function printLine(line, bold) {
+      if (/^[ -~]+$/.test(line)) {
+        nativeLine(line);
+        return;
+      }
+      // Gambar hanya baris yang memerlukan Unicode. Ukuran sel sama dengan Font A.
+      var width = Math.ceil(Array.from(line).length * printerCellWidth / 8) * 8;
+      var canvas = makeCanvas(width, 30);
+      var ctx = canvas.getContext('2d');
+      ctx.font = (bold ? 'bold ' : '') + '24px "Courier New", monospace';
+      ctx.scale(printerCellWidth / ctx.measureText('M').width, 1);
+      ctx.fillText(line, 0, 22);
+      parts.push.apply(parts, receiptBitmapBands(canvas));
+    }
+    function printRule(doubleLine) {
+      var bytes = printerColumns * printerCellWidth / 8;
+      var height = doubleLine ? 5 : 2;
+      var data = new Uint8Array(8 + bytes * height);
+      data.set([0x1d, 0x76, 0x30, 0, bytes, 0, height, 0]);
+      data.fill(doubleLine ? 255 : 240, 8, 8 + bytes);
+      data.fill(doubleLine ? 255 : 240, 8 + (height - 1) * bytes);
+      feed(6);
+      parts.push({ data: data, bitmap: true });
+      feed(8);
+    }
+
+    command(0x1b, 0x40, 0x1b, 0x32, 0x1b, 0x4d, 0); // ESC @, ESC 2, Font A
+    if (logo) {
+      await logo.decode();
+      var width = 232, height = Math.round(width * logo.naturalHeight / logo.naturalWidth);
+      var canvas = makeCanvas(width, height);
+      canvas.getContext('2d').drawImage(logo, 0, 0, width, height);
+      align(1);
+      parts.push.apply(parts, receiptBitmapBands(canvas));
+      feed(6);
+      align(0);
+    }
+    for (var row of receipt.children) {
+      if (logo && row.contains(logo)) continue;
+      if (row.classList.contains('rq')) {
+        align(1);
+        nativeLine('NO. ANTRIAN');
+        var queue = row.lastElementChild.textContent.trim();
+        if (/^\d{1,6}$/.test(queue)) {
+          command(0x1d, 0x21, 0x11, 0x1d, 0x42, 1); // GS ! 2x dan GS B terbalik.
+          nativeLine(' ' + queue + ' ');
+          command(0x1d, 0x42, 0, 0x1d, 0x21, 0);
+        }
+        align(0);
+        continue;
+      }
+      if (row.classList.contains('rule')) {
+        printRule(row.classList.contains('dbl'));
+        continue;
+      }
+      var centered = row.classList.contains('rc');
+      var bold = row.classList.contains('rt') || Boolean(row.querySelector('b'));
+      if (centered) align(1);
+      if (bold) emphasis(true);
+      if (row.classList.contains('rr')) {
+        var left = wrapPrinterLine(row.firstElementChild.textContent, printerColumns);
+        var right = wrapPrinterLine(row.lastElementChild.textContent, printerColumns);
+        if (left.length === 1 && right.length === 1) {
+          var spaces = printerColumns - Array.from(left[0]).length - Array.from(right[0]).length;
+          if (spaces > 0) {
+            printLine(left[0] + ' '.repeat(spaces) + right[0], bold);
+            left = right = [];
+          }
+        }
+        for (var label of left) printLine(label, bold);
+        if (right.length) {
+          align(2);
+          for (var value of right) printLine(value, bold);
+          align(0);
+        }
+      } else {
+        for (var line of wrapPrinterLine(row.textContent, printerColumns)) printLine(line, bold);
+      }
+      if (centered) align(0);
+      if (bold) emphasis(false);
+    }
+    command(10, 10, 10);
+    return parts;
+  }
+
   async function printBluetooth() {
     var receipt = document.querySelector('.modal .receipt');
     if (!printerOutput || printerBusy || !receipt) return;
@@ -892,24 +925,28 @@
     render();
     var message, failed = false, sending = false;
     try {
-      var bands = await printerRaster(receipt);
+      var parts = await printerReceipt(receipt);
       if (printerOutput !== target) throw new Error('Printer disconnected');
       sending = true;
-      for (var band of bands) {
-        for (var i = 0; i < band.length; i += 20) {
-          var chunk = band.subarray(i, i + 20);
-          if (target.properties.write && target.writeValueWithResponse) await target.writeValueWithResponse(chunk);
+      var withResponse = target.properties.write && target.writeValueWithResponse;
+      function pause(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+      for (var part of parts) {
+        for (var i = 0; i < part.data.length; i += 20) {
+          var chunk = part.data.subarray(i, i + 20);
+          if (withResponse) await target.writeValueWithResponse(chunk);
           else if (target.writeValueWithoutResponse && target.properties.writeWithoutResponse) {
             await target.writeValueWithoutResponse(chunk);
-            await new Promise(function (resolve) { setTimeout(resolve, 20); });
           } else await target.writeValue(chunk);
+          // Sisakan waktu untuk buffer printer, termasuk saat BLE mengonfirmasi paket.
+          if (part.bitmap || !withResponse) await pause(part.bitmap ? 12 : 20);
         }
+        if (part.bitmap) await pause(45);
       }
       message = 'Struk dikirim ke printer.';
     } catch (e) {
       if (sending) message = 'Cetak terhenti. Periksa kertas, lalu nyalakan ulang printer sebelum mencoba lagi.';
       else if (printerOutput !== target) message = 'Sambungkan kembali printer Bluetooth.';
-      else message = 'Gambar struk gagal disiapkan. Coba lagi atau gunakan Cetak lewat sistem.';
+      else message = 'Struk gagal disiapkan. Coba lagi atau gunakan Cetak lewat sistem.';
       failed = true;
     } finally { printerBusy = false; render(); toast(message, failed); }
   }
