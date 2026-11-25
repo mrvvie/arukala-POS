@@ -179,7 +179,7 @@ textarea{resize:none;font-family:inherit}
     font-size:9pt;line-height:1.25;word-wrap:break-word;overflow-wrap:anywhere
   }
   body.print-receipt .receipt .rlogo{width:25mm;max-width:100%;margin:0 auto 1mm}
-  body.print-receipt .receipt .rq b{background:white;color:black;font-size:20pt;padding:0}
+  body.print-receipt .receipt .rq b{background:#000;color:#fff;font-size:20pt;padding:1mm 4mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   body.print-receipt .receipt .rt{font-size:11pt}
   body.print-receipt .receipt .rule{margin:1.5mm 0}
   body.print-receipt .receipt .rr{break-inside:avoid;page-break-inside:avoid}

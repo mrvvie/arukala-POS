@@ -798,27 +798,32 @@
     return lines;
   }
 
-  function receiptBitmapBands(canvas) {
+  function receiptBitmapBands(canvas, lineSpacing) {
     var ctx = canvas.getContext('2d');
-    var byteWidth = canvas.width / 8, bands = [];
-    for (var top = 0; top < canvas.height; top += 16) {
-      var rows = Math.min(16, canvas.height - top);
-      var pixels = ctx.getImageData(0, top, canvas.width, rows).data;
-      var data = new Uint8Array(8 + byteWidth * rows);
-      data.set([0x1d, 0x76, 0x30, 0, byteWidth, 0, rows, 0]); // GS v 0
-      for (var p = 0; p < pixels.length; p += 4) {
-        var luminance = 0.299 * pixels[p] + 0.587 * pixels[p + 1] + 0.114 * pixels[p + 2];
-        if (luminance < 160) data[8 + (p >> 5)] |= 0x80 >> ((p >> 2) & 7);
+    var width = canvas.width, bands = [];
+    for (var top = 0; top < canvas.height; top += 24) {
+      var rows = Math.min(24, canvas.height - top);
+      var pixels = ctx.getImageData(0, top, width, rows).data;
+      var data = new Uint8Array(6 + width * 3);
+      data.set([0x1b, 0x2a, 33, width & 255, width >> 8]); // ESC * 24-dot, data per kolom.
+      for (var y = 0; y < rows; y++) {
+        for (var x = 0; x < width; x++) {
+          var p = 4 * (y * width + x);
+          var luminance = 0.299 * pixels[p] + 0.587 * pixels[p + 1] + 0.114 * pixels[p + 2];
+          if (luminance < 160) data[5 + x * 3 + (y >> 3)] |= 0x80 >> (y & 7);
+        }
       }
+      data[data.length - 1] = 10; // LF mencetak blok dan memajukan kertas.
       bands.push({ data: data, bitmap: true });
     }
-    return bands;
+    return [{ data: Uint8Array.of(0x1b, 0x33, lineSpacing) }].concat(bands, [
+      { data: Uint8Array.of(0x1b, 0x32) } // ESC 2: spasi teks bawaan.
+    ]);
   }
 
   async function printerReceipt(receipt) {
     var parts = [], encoder = new TextEncoder(), logo = receipt.querySelector('.rlogo');
     function command() { parts.push({ data: Uint8Array.from(arguments) }); }
-    function feed(dots) { command(0x1b, 0x4a, dots); } // ESC J
     function align(position) { command(0x1b, 0x61, position); } // ESC a
     function emphasis(on) { command(0x1b, 0x45, on ? 1 : 0); } // ESC E
     function makeCanvas(width, height) {
@@ -838,24 +843,16 @@
         return;
       }
       // Gambar hanya baris yang memerlukan Unicode. Ukuran sel sama dengan Font A.
-      var width = Math.ceil(Array.from(line).length * printerCellWidth / 8) * 8;
-      var canvas = makeCanvas(width, 30);
+      var width = Array.from(line).length * printerCellWidth;
+      var canvas = makeCanvas(width, 24);
       var ctx = canvas.getContext('2d');
       ctx.font = (bold ? 'bold ' : '') + '24px "Courier New", monospace';
       ctx.scale(printerCellWidth / ctx.measureText('M').width, 1);
       ctx.fillText(line, 0, 22);
-      parts.push.apply(parts, receiptBitmapBands(canvas));
+      parts.push.apply(parts, receiptBitmapBands(canvas, 30));
     }
     function printRule(doubleLine) {
-      var bytes = printerColumns * printerCellWidth / 8;
-      var height = doubleLine ? 5 : 2;
-      var data = new Uint8Array(8 + bytes * height);
-      data.set([0x1d, 0x76, 0x30, 0, bytes, 0, height, 0]);
-      data.fill(doubleLine ? 255 : 240, 8, 8 + bytes);
-      data.fill(doubleLine ? 255 : 240, 8 + (height - 1) * bytes);
-      feed(6);
-      parts.push({ data: data, bitmap: true });
-      feed(8);
+      nativeLine((doubleLine ? '=' : '-').repeat(printerColumns));
     }
 
     command(0x1b, 0x40, 0x1b, 0x32, 0x1b, 0x4d, 0); // ESC @, ESC 2, Font A
@@ -865,8 +862,7 @@
       var canvas = makeCanvas(width, height);
       canvas.getContext('2d').drawImage(logo, 0, 0, width, height);
       align(1);
-      parts.push.apply(parts, receiptBitmapBands(canvas));
-      feed(6);
+      parts.push.apply(parts, receiptBitmapBands(canvas, 24));
       align(0);
     }
     for (var row of receipt.children) {
@@ -876,9 +872,9 @@
         nativeLine('NO. ANTRIAN');
         var queue = row.lastElementChild.textContent.trim();
         if (/^\d{1,6}$/.test(queue)) {
-          command(0x1d, 0x21, 0x11, 0x1d, 0x42, 1); // GS ! 2x dan GS B terbalik.
+          command(0x1b, 0x33, 56, 0x1d, 0x21, 0x11, 0x1d, 0x42, 1); // GS ! 2x dan GS B terbalik.
           nativeLine(' ' + queue + ' ');
-          command(0x1d, 0x42, 0, 0x1d, 0x21, 0);
+          command(0x1d, 0x42, 0, 0x1d, 0x21, 0, 0x1b, 0x32);
         }
         align(0);
         continue;
@@ -938,9 +934,9 @@
             await target.writeValueWithoutResponse(chunk);
           } else await target.writeValue(chunk);
           // Sisakan waktu untuk buffer printer, termasuk saat BLE mengonfirmasi paket.
-          if (part.bitmap || !withResponse) await pause(part.bitmap ? 12 : 20);
+          if (part.bitmap || !withResponse) await pause(20);
         }
-        if (part.bitmap) await pause(45);
+        if (part.bitmap) await pause(75);
       }
       message = 'Struk dikirim ke printer.';
     } catch (e) {
