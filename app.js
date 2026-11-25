@@ -791,26 +791,28 @@
     var baseline = isFinite(metrics.fontBoundingBoxAscent)
       ? (metrics.fontBoundingBoxAscent - metrics.fontBoundingBoxDescent) / 2
       : parseFloat(style.fontSize) * 0.3;
-    var line = '', box = null, offset = 0;
-    function paintLine() {
+    var lineStart = 0, box = null, offset = 0;
+    function paintLine(end) {
+      // Ambil teks asli per baris, termasuk tanda gabung yang lebarnya nol.
+      var line = text.slice(lineStart, end).replace(/[ \t\n\f\r]+/g, ' ').replace(/^ | $/g, '').normalize('NFC');
       ctx.fillText(line, box.left - bounds.left, (box.top + box.height / 2) - bounds.top + baseline);
     }
-    // Gunakan posisi baris dari browser agar teks panjang mengikuti pembungkusan CSS.
+    // Posisi pembungkusan berasal dari tata letak browser.
     for (var character of text) {
-      range.setStart(node, offset);
+      var start = offset;
+      range.setStart(node, start);
       offset += character.length;
       range.setEnd(node, offset);
       var next = range.getBoundingClientRect();
       if (!next.width) continue;
       if (box && next.top !== box.top) {
-        paintLine();
-        line = '';
+        paintLine(start);
+        lineStart = start;
         box = null;
       }
       if (!box) box = next;
-      line += character;
     }
-    if (box) paintLine();
+    if (box) paintLine(text.length);
   }
   function paintReceipt(ctx, element, bounds) {
     var rect = element.getBoundingClientRect();
